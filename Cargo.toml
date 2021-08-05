@@ -11,6 +11,9 @@ edition = "2018"
 assert_cmd = "0.11.0"
 predicates = "1.0.0"
 
+[dependencies]
+clap = "2.33.3"
+
 [lib]
 test = false
 doctest = false
