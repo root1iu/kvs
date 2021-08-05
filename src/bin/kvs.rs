@@ -9,12 +9,18 @@ fn main() {
         .subcommands(vec![
             SubCommand::with_name("get")
                 .about("get the value of key")
+                .author(env!("CARGO_PKG_AUTHORS"))
+                .version(env!("CARGO_PKG_VERSION"))
                 .arg(Arg::with_name("key").index(1).required(true)),
             SubCommand::with_name("rm")
                 .about("rm the key")
+                .author(env!("CARGO_PKG_AUTHORS"))
+                .version(env!("CARGO_PKG_VERSION"))
                 .arg(Arg::with_name("key").index(1).required(true)),
             SubCommand::with_name("set")
                 .about("set a key-value pair")
+                .author(env!("CARGO_PKG_AUTHORS"))
+                .version(env!("CARGO_PKG_VERSION"))
                 .args(&[
                     Arg::with_name("key").index(1).required(true),
                     Arg::with_name("value").index(2).required(true),
@@ -23,7 +29,7 @@ fn main() {
         .get_matches();
 
     if matches.is_present("version") {
-        println!("0.1.0");
+        println!(env!("CARGO_PKG_VERSION"));
         return;
     }
 
