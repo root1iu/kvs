@@ -7,6 +7,12 @@ pub struct KvStore {
     kvs: HashMap<String, String>,
 }
 
+impl Default for KvStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl KvStore {
     /// Creates an empty `KvStore`.
     ///
