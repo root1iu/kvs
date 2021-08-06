@@ -33,19 +33,21 @@ fn main() {
         return;
     }
 
-    let kv = KvStore::new();
+    let mut kv = KvStore::new();
     match matches.subcommand_name() {
         Some("get") => {
             if let Some(get_matches) = matches.subcommand_matches("get") {
                 let key = String::from(get_matches.value_of("key").unwrap());
                 kv.get(key);
             }
+            panic!("unimplemented");
         }
         Some("rm") => {
             if let Some(rm_matches) = matches.subcommand_matches("rm") {
                 let key = String::from(rm_matches.value_of("key").unwrap());
                 kv.remove(key);
             }
+            panic!("unimplemented");
         }
         Some("set") => {
             if let Some(set_matches) = matches.subcommand_matches("set") {
@@ -53,6 +55,7 @@ fn main() {
                 let value = String::from(set_matches.value_of("value").unwrap());
                 kv.set(key, value);
             }
+            panic!("unimplemented");
         }
         None => {
             panic!("unimplemented");
