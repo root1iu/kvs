@@ -33,15 +33,15 @@ fn main() {
     let mut kv = KvStore::new();
     match opt.cmd {
         Some(Command::Get { key }) => {
-            kv.get(key);
+            kv.get(key).unwrap();
             panic!("unimplemented");
         }
         Some(Command::Rm { key }) => {
-            kv.remove(key);
+            kv.remove(key).unwrap();
             panic!("unimplemented");
         }
         Some(Command::Set { key, value }) => {
-            kv.set(key, value);
+            kv.set(key, value).unwrap();
             panic!("unimplemented");
         }
         None => {
