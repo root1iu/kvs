@@ -14,7 +14,14 @@ pub type Result<T> = result::Result<T, ErrorType>;
 /// ErrorType
 #[derive(Fail, Debug)]
 #[fail(display = "My ErrorType")]
-pub struct ErrorType {}
+pub enum ErrorType {
+    #[fail(display = "the key \"{}\" is nonexistent", _0)]
+    /// nonexistent error
+    Nonexistent(String),
+    #[fail(display = "log file fail")]
+    /// log file fail
+    LogFail(),
+}
 
 /// KvStore store the key-value in HashMap
 pub struct KvStore {
@@ -56,9 +63,11 @@ impl KvStore {
     /// store.set("key1".to_owned(), "value1".to_owned());
     /// assert_eq!(store.get("key1".to_owned()), Some("value1".to_owned()));
     /// ```
-    pub fn set(&mut self, k: String, v: String) -> Result<()> {
-        self.kvs.insert(k, v);
-        Ok(())
+    pub fn set(&mut self, k: String, v: String) -> Result<String> {
+        match self.kvs.insert(k, v) {
+            Some(v) => Ok(String::from(v)),
+            None => Ok(String::from("")),
+        }
     }
 
     /// Removes a key from the KvStore
@@ -74,9 +83,11 @@ impl KvStore {
     /// store.remove("key1".to_owned());
     /// assert_eq!(store.get("key1".to_owned()), None);
     /// ```
-    pub fn remove(&mut self, k: String) -> Result<()> {
-        self.kvs.remove(&k);
-        Ok(())
+    pub fn remove(&mut self, k: String) -> Result<String> {
+        match self.kvs.remove(&k) {
+            Some(v) => Ok(String::from(v)),
+            None => Err(ErrorType::Nonexistent(String::from(&k))),
+        }
     }
 
     /// Returns a copy of the value corresponding to the key.
@@ -91,15 +102,15 @@ impl KvStore {
     /// store.set("key1".to_owned(), "value1".to_owned());
     /// assert_eq!(store.get("key1".to_owned()), Some("value1".to_owned()));
     /// ```
-    pub fn get(&self, k: String) -> Result<Option<String>> {
+    pub fn get(&self, k: String) -> Result<String> {
         match self.kvs.get(&k) {
-            Some(v) => Ok(Some(String::from(v))),
-            None => Err(ErrorType {}),
+            Some(v) => Ok(String::from(v)),
+            None => Err(ErrorType::Nonexistent(String::from(&k))),
         }
     }
 
     /// Open the KvStore at a given path. Return the KvStore.
     pub fn open(path: impl Into<PathBuf>) -> Result<KvStore> {
-        Err(ErrorType {})
+        Err(ErrorType::LogFail())
     }
 }

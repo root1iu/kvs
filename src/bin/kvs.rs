@@ -32,18 +32,18 @@ fn main() {
 
     let mut kv = KvStore::new();
     match opt.cmd {
-        Some(Command::Get { key }) => {
-            kv.get(key).unwrap();
-            panic!("unimplemented");
-        }
-        Some(Command::Rm { key }) => {
-            kv.remove(key).unwrap();
-            panic!("unimplemented");
-        }
-        Some(Command::Set { key, value }) => {
-            kv.set(key, value).unwrap();
-            panic!("unimplemented");
-        }
+        Some(Command::Get { key }) => match kv.get(key) {
+            Ok(value) => println!("get value: {}", value),
+            Err(err) => panic!("get fail for {}", err),
+        },
+        Some(Command::Rm { key }) => match kv.remove(key) {
+            Ok(value) => println!("remove value: {}", value),
+            Err(err) => panic!("remove fail for {}", err),
+        },
+        Some(Command::Set { key, value }) => match kv.set(key, value) {
+            Ok(value) => println!("set old value: \"{}\"", value),
+            Err(err) => panic!("set fail for {}", err),
+        },
         None => {
             panic!("unimplemented");
         }
