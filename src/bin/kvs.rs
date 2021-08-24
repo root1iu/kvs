@@ -1,6 +1,7 @@
 extern crate structopt;
 
 use kvs::KvStore;
+use std::process;
 use structopt::StructOpt;
 
 #[derive(StructOpt)]
@@ -33,16 +34,22 @@ fn main() {
     let mut kv = KvStore::new();
     match opt.cmd {
         Some(Command::Get { key }) => match kv.get(key) {
-            Ok(value) => println!("get value: {}", value),
-            Err(err) => panic!("get fail for {}", err),
+            Ok(value) => match value {
+                Some(v) => println!("get value: {}", v),
+                None => println!("get none value"),
+            },
+            Err(_) => println!("Key not found"),
         },
         Some(Command::Rm { key }) => match kv.remove(key) {
-            Ok(value) => println!("remove value: {}", value),
-            Err(err) => panic!("remove fail for {}", err),
+            Ok(key) => println!("Key {} removed", key),
+            Err(_) => {
+                println!("Key not found");
+                process::exit(1);
+            }
         },
         Some(Command::Set { key, value }) => match kv.set(key, value) {
-            Ok(value) => println!("set old value: \"{}\"", value),
             Err(err) => panic!("set fail for {}", err),
+            _ => (),
         },
         None => {
             panic!("unimplemented");

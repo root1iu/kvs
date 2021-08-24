@@ -102,9 +102,9 @@ impl KvStore {
     /// store.set("key1".to_owned(), "value1".to_owned());
     /// assert_eq!(store.get("key1".to_owned()), Some("value1".to_owned()));
     /// ```
-    pub fn get(&self, k: String) -> Result<String> {
+    pub fn get(&self, k: String) -> Result<Option<String>> {
         match self.kvs.get(&k) {
-            Some(v) => Ok(String::from(v)),
+            Some(v) => Ok(Some(String::from(v))),
             None => Err(ErrorType::Nonexistent(String::from(&k))),
         }
     }
