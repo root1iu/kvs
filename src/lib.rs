@@ -1,6 +1,10 @@
 #![deny(missing_docs)]
 //! kvs is an in-memory key/value store
+extern crate serde;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::{self, BufRead};
 use std::path::PathBuf;
 use std::result;
 
@@ -11,6 +15,14 @@ extern crate failure_derive;
 /// the alias of result::Result
 pub type Result<T> = result::Result<T, ErrorType>;
 
+/// opt data
+#[derive(Serialize, Deserialize)]
+enum OptData {
+    SetData { key: String, value: String },
+    RmData { key: String },
+    GetData { key: String },
+}
+
 /// ErrorType
 #[derive(Fail, Debug)]
 #[fail(display = "My ErrorType")]
@@ -18,6 +30,9 @@ pub enum ErrorType {
     #[fail(display = "the key \"{}\" is nonexistent", _0)]
     /// nonexistent error
     Nonexistent(String),
+    #[fail(display = "open \"{}\" fail for {}", _0, _1)]
+    /// nonexistent error
+    OpenFileFail(String, io::Error),
     #[fail(display = "log file fail")]
     /// log file fail
     LogFail(),
@@ -111,6 +126,36 @@ impl KvStore {
 
     /// Open the KvStore at a given path. Return the KvStore.
     pub fn open(path: impl Into<PathBuf>) -> Result<KvStore> {
-        Err(ErrorType::LogFail())
+        let mut pathbuf = path.into();
+        pathbuf.push("kvs.db");
+        match File::open(&pathbuf) {
+            Ok(file) => {
+                let mut kvs = KvStore::new();
+                for line in io::BufReader::new(file).lines() {
+                    match line {
+                        Ok(line) => {
+                            let decode: OptData = serde_json::from_str(&line).unwrap();
+                            match decode {
+                                OptData::SetData { key, value } => {
+                                    let _ = kvs.set(key, value);
+                                }
+                                OptData::RmData { key } => {
+                                    let _ = kvs.remove(key);
+                                }
+                                _ => {}
+                            };
+                        }
+                        Err(_) => {}
+                    }
+                }
+                Ok(kvs)
+            }
+            Err(err) => {
+                return Err(ErrorType::OpenFileFail(
+                    String::from(pathbuf.as_path().display().to_string()),
+                    err,
+                ))
+            }
+        }
     }
 }
