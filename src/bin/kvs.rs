@@ -1,6 +1,7 @@
 extern crate structopt;
 
 use kvs::KvStore;
+use std::env;
 use std::process;
 use structopt::StructOpt;
 
@@ -31,19 +32,20 @@ fn main() {
         return;
     }
 
-    let mut kv = KvStore::new();
+    let cwd = env::current_dir().unwrap();
+    let mut kv = KvStore::open(cwd).unwrap();
     match opt.cmd {
         Some(Command::Get { key }) => match kv.get(key) {
             Ok(value) => match value {
-                Some(v) => println!("get value: {}", v),
-                None => println!("get none value"),
+                Some(v) => println!("{}", v),
+                None => println!("Key not found"),
             },
-            Err(_) => println!("Key not found"),
+            Err(_) => {}
         },
         Some(Command::Rm { key }) => match kv.remove(key) {
-            Ok(key) => println!("Key {} removed", key),
-            Err(_) => {
-                println!("Key not found");
+            Ok(_) => {}
+            Err(err) => {
+                println!("{}", err);
                 process::exit(1);
             }
         },

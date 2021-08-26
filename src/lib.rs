@@ -3,49 +3,62 @@
 extern crate serde;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::{self, BufRead};
+use std::env;
+use std::fs::{File, OpenOptions};
+use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 use std::result;
 
 extern crate failure;
-#[macro_use]
-extern crate failure_derive;
+use failure::Error;
 
 /// the alias of result::Result
-pub type Result<T> = result::Result<T, ErrorType>;
+pub type Result<T> = result::Result<T, Error>;
 
 /// opt data
-#[derive(Serialize, Deserialize)]
-enum OptData {
-    SetData { key: String, value: String },
-    RmData { key: String },
-    GetData { key: String },
-}
-
-/// ErrorType
-#[derive(Fail, Debug)]
-#[fail(display = "My ErrorType")]
-pub enum ErrorType {
-    #[fail(display = "the key \"{}\" is nonexistent", _0)]
-    /// nonexistent error
-    Nonexistent(String),
-    #[fail(display = "open \"{}\" fail for {}", _0, _1)]
-    /// nonexistent error
-    OpenFileFail(String, io::Error),
-    #[fail(display = "log file fail")]
-    /// log file fail
-    LogFail(),
+#[derive(Serialize, Deserialize, Debug)]
+pub enum OptData {
+    /// set data: key-value
+    SetData {
+        /// key
+        key: String,
+        /// value
+        value: String,
+    },
+    /// remove data: key
+    RmData {
+        /// key
+        key: String,
+    },
+    /// get data: key
+    GetData {
+        /// key
+        key: String,
+    },
 }
 
 /// KvStore store the key-value in HashMap
 pub struct KvStore {
+    /// KvStore store the key-value in HashMap
     kvs: HashMap<String, String>,
+    log: Option<File>,
 }
 
 impl Default for KvStore {
     fn default() -> Self {
-        Self::new()
+        match env::current_dir() {
+            Ok(pathbuf) => match KvStore::open(pathbuf) {
+                Ok(kv) => kv,
+                Err(_) => KvStore {
+                    kvs: HashMap::new(),
+                    log: None,
+                },
+            },
+            Err(_) => KvStore {
+                kvs: HashMap::new(),
+                log: None,
+            },
+        }
     }
 }
 
@@ -60,11 +73,12 @@ impl KvStore {
     /// use kvs::KvStore;
     /// let mut store = KvStore::new();
     /// ```
-    pub fn new() -> KvStore {
-        KvStore {
-            kvs: HashMap::new(),
-        }
-    }
+    // pub fn new() -> KvStore {
+    //     KvStore {
+    //         kvs: HashMap::new(),
+    //         log: None,
+    //     }
+    // }
 
     /// Inserts a key-value pair into the KvStore.
     ///
@@ -79,6 +93,18 @@ impl KvStore {
     /// assert_eq!(store.get("key1".to_owned()), Some("value1".to_owned()));
     /// ```
     pub fn set(&mut self, k: String, v: String) -> Result<String> {
+        let data = OptData::SetData {
+            key: String::from(&k),
+            value: String::from(&v),
+        };
+        let mut data_str = serde_json::to_string(&data)?;
+        match &mut self.log {
+            Some(log) => {
+                data_str.push('\n');
+                log.write_all(data_str.as_bytes())?;
+            }
+            None => {}
+        }
         match self.kvs.insert(k, v) {
             Some(v) => Ok(String::from(v)),
             None => Ok(String::from("")),
@@ -99,9 +125,20 @@ impl KvStore {
     /// assert_eq!(store.get("key1".to_owned()), None);
     /// ```
     pub fn remove(&mut self, k: String) -> Result<String> {
+        let data = OptData::RmData {
+            key: String::from(&k),
+        };
+        let mut data_str = serde_json::to_string(&data)?;
+        match &mut self.log {
+            Some(log) => {
+                data_str.push('\n');
+                log.write_all(data_str.as_bytes())?;
+            }
+            None => {}
+        }
         match self.kvs.remove(&k) {
             Some(v) => Ok(String::from(v)),
-            None => Err(ErrorType::Nonexistent(String::from(&k))),
+            None => Err(failure::format_err!("Key not found")),
         }
     }
 
@@ -120,42 +157,38 @@ impl KvStore {
     pub fn get(&self, k: String) -> Result<Option<String>> {
         match self.kvs.get(&k) {
             Some(v) => Ok(Some(String::from(v))),
-            None => Err(ErrorType::Nonexistent(String::from(&k))),
+            None => Ok(None),
         }
     }
 
     /// Open the KvStore at a given path. Return the KvStore.
     pub fn open(path: impl Into<PathBuf>) -> Result<KvStore> {
         let mut pathbuf = path.into();
-        pathbuf.push("kvs.db");
-        match File::open(&pathbuf) {
-            Ok(file) => {
-                let mut kvs = KvStore::new();
-                for line in io::BufReader::new(file).lines() {
-                    match line {
-                        Ok(line) => {
-                            let decode: OptData = serde_json::from_str(&line).unwrap();
-                            match decode {
-                                OptData::SetData { key, value } => {
-                                    let _ = kvs.set(key, value);
-                                }
-                                OptData::RmData { key } => {
-                                    let _ = kvs.remove(key);
-                                }
-                                _ => {}
-                            };
-                        }
-                        Err(_) => {}
-                    }
+        pathbuf.push("kvs.log");
+        let file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .append(true)
+            .open(&pathbuf)?;
+        let mut kvs: HashMap<String, String> = HashMap::new();
+        for line in io::BufReader::new(&file).lines() {
+            let line = line?;
+            let decode: OptData = serde_json::from_str(&line)?;
+            match decode {
+                OptData::SetData { key, value } => {
+                    kvs.insert(key, value);
                 }
-                Ok(kvs)
-            }
-            Err(err) => {
-                return Err(ErrorType::OpenFileFail(
-                    String::from(pathbuf.as_path().display().to_string()),
-                    err,
-                ))
-            }
+                OptData::RmData { key } => {
+                    kvs.remove(&key);
+                }
+                // ignore get
+                _ => {}
+            };
         }
+        Ok(KvStore {
+            kvs,
+            log: Some(file),
+        })
     }
 }
