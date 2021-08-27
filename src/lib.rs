@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
 use std::fs::{File, OpenOptions};
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::result;
 
@@ -37,11 +37,17 @@ pub enum OptData {
     },
 }
 
+struct OffsetLen {
+    offset: usize,
+    len: usize,
+}
+
 /// KvStore store the key-value in HashMap
 pub struct KvStore {
     /// KvStore store the key-value in HashMap
-    kvs: HashMap<String, String>,
+    kvs: HashMap<String, OffsetLen>,
     log: Option<File>,
+    log_off: usize,
 }
 
 impl Default for KvStore {
@@ -52,11 +58,13 @@ impl Default for KvStore {
                 Err(_) => KvStore {
                     kvs: HashMap::new(),
                     log: None,
+                    log_off: 0,
                 },
             },
             Err(_) => KvStore {
                 kvs: HashMap::new(),
                 log: None,
+                log_off: 0,
             },
         }
     }
@@ -102,11 +110,18 @@ impl KvStore {
             Some(log) => {
                 data_str.push('\n');
                 log.write_all(data_str.as_bytes())?;
+                self.log_off += data_str.len();
             }
             None => {}
         }
-        match self.kvs.insert(k, v) {
-            Some(v) => Ok(String::from(v)),
+        match self.kvs.insert(
+            k,
+            OffsetLen {
+                offset: self.log_off - data_str.len(),
+                len: data_str.len(),
+            },
+        ) {
+            Some(v) => Ok(String::from(v.offset.to_string())),
             None => Ok(String::from("")),
         }
     }
@@ -133,11 +148,12 @@ impl KvStore {
             Some(log) => {
                 data_str.push('\n');
                 log.write_all(data_str.as_bytes())?;
+                self.log_off += data_str.len();
             }
             None => {}
         }
         match self.kvs.remove(&k) {
-            Some(v) => Ok(String::from(v)),
+            Some(_) => Ok(String::from(&k)),
             None => Err(failure::format_err!("Key not found")),
         }
     }
@@ -154,11 +170,29 @@ impl KvStore {
     /// store.set("key1".to_owned(), "value1".to_owned());
     /// assert_eq!(store.get("key1".to_owned()), Some("value1".to_owned()));
     /// ```
-    pub fn get(&self, k: String) -> Result<Option<String>> {
-        match self.kvs.get(&k) {
-            Some(v) => Ok(Some(String::from(v))),
-            None => Ok(None),
+    pub fn get(&mut self, k: String) -> Result<Option<String>> {
+        let off2len = match self.kvs.get(&k) {
+            Some(v) => v,
+            None => {
+                return Ok(None);
+            }
+        };
+        // println!("off2len: {}:{}", off2len.offset, off2len.len);
+        match &mut self.log {
+            Some(log) => {
+                let mut buf = String::new();
+                log.seek(SeekFrom::Start(off2len.offset as u64))?;
+                log.take(off2len.len as u64).read_to_string(&mut buf)?;
+                let decode: OptData = serde_json::from_str(&buf)?;
+                // println!("buf: {}, decode :{:?}", buf, decode);
+                match decode {
+                    OptData::SetData { key: _, value } => return Ok(Some(value)),
+                    _ => return Ok(None),
+                }
+            }
+            None => {}
         }
+        Ok(None)
     }
 
     /// Open the KvStore at a given path. Return the KvStore.
@@ -171,13 +205,20 @@ impl KvStore {
             .write(true)
             .append(true)
             .open(&pathbuf)?;
-        let mut kvs: HashMap<String, String> = HashMap::new();
+        let mut kvs: HashMap<String, OffsetLen> = HashMap::new();
+        let mut offset: usize = 0;
         for line in io::BufReader::new(&file).lines() {
             let line = line?;
             let decode: OptData = serde_json::from_str(&line)?;
             match decode {
-                OptData::SetData { key, value } => {
-                    kvs.insert(key, value);
+                OptData::SetData { key, value: _ } => {
+                    kvs.insert(
+                        key,
+                        OffsetLen {
+                            offset,
+                            len: line.len(),
+                        },
+                    );
                 }
                 OptData::RmData { key } => {
                     kvs.remove(&key);
@@ -185,10 +226,12 @@ impl KvStore {
                 // ignore get
                 _ => {}
             };
+            offset += line.len() + 1;
         }
         Ok(KvStore {
             kvs,
             log: Some(file),
+            log_off: offset,
         })
     }
 }
