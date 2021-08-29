@@ -4,8 +4,9 @@ extern crate serde;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
-use std::fs::{File, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, Read, Seek, SeekFrom, Write};
+use std::os::unix::fs::FileExt;
 use std::path::PathBuf;
 use std::result;
 
@@ -37,17 +38,18 @@ pub enum OptData {
     },
 }
 
+#[derive(Debug)]
 struct OffsetLen {
-    offset: usize,
-    len: usize,
+    offset: usize, // the offset of serialized OptData in log file
+    len: usize,    // the length of serialized OptData(include '\n')
 }
 
 /// KvStore store the key-value in HashMap
 pub struct KvStore {
-    /// KvStore store the key-value in HashMap
     kvs: HashMap<String, OffsetLen>,
-    log: Option<File>,
-    log_off: usize,
+    log: Option<File>, // the object of log file
+    log_off: usize,    // current offset of log file
+    log_name: PathBuf, // the name of log file
 }
 
 impl Default for KvStore {
@@ -59,35 +61,20 @@ impl Default for KvStore {
                     kvs: HashMap::new(),
                     log: None,
                     log_off: 0,
+                    log_name: PathBuf::new(),
                 },
             },
             Err(_) => KvStore {
                 kvs: HashMap::new(),
                 log: None,
                 log_off: 0,
+                log_name: PathBuf::new(),
             },
         }
     }
 }
 
 impl KvStore {
-    /// Creates an empty `KvStore`.
-    ///
-    /// The KvStore is initially created with HashMap
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use kvs::KvStore;
-    /// let mut store = KvStore::new();
-    /// ```
-    // pub fn new() -> KvStore {
-    //     KvStore {
-    //         kvs: HashMap::new(),
-    //         log: None,
-    //     }
-    // }
-
     /// Inserts a key-value pair into the KvStore.
     ///
     /// # Examples
@@ -100,30 +87,38 @@ impl KvStore {
     /// store.set("key1".to_owned(), "value1".to_owned());
     /// assert_eq!(store.get("key1".to_owned()), Some("value1".to_owned()));
     /// ```
-    pub fn set(&mut self, k: String, v: String) -> Result<String> {
+    pub fn set(&mut self, k: String, v: String) -> Result<()> {
         let data = OptData::SetData {
             key: String::from(&k),
             value: String::from(&v),
         };
-        let mut data_str = serde_json::to_string(&data)?;
-        match &mut self.log {
-            Some(log) => {
-                data_str.push('\n');
-                log.write_all(data_str.as_bytes())?;
-                self.log_off += data_str.len();
+        let mut offset: usize = self.log_off;
+        match self.kvs.get(&k) {
+            Some(off2len) => {
+                offset = off2len.offset;
             }
             None => {}
         }
-        match self.kvs.insert(
-            k,
-            OffsetLen {
-                offset: self.log_off - data_str.len(),
-                len: data_str.len(),
-            },
-        ) {
-            Some(v) => Ok(String::from(v.offset.to_string())),
-            None => Ok(String::from("")),
+        let mut data_str = serde_json::to_string(&data)?;
+        data_str.push('\n');
+        let value = self.kvs.entry(k).or_insert(OffsetLen {
+            offset: offset,
+            len: data_str.len(),
+        });
+        if value.len != data_str.len() {
+            self.rebuild_log(offset, &data_str)?;
+        } else {
+            match &mut self.log {
+                Some(log) => {
+                    log.write_at(data_str.as_bytes(), offset as u64)?;
+                    if offset + data_str.len() > self.log_off {
+                        self.log_off = offset + data_str.len();
+                    }
+                }
+                None => {}
+            }
         }
+        Ok(())
     }
 
     /// Removes a key from the KvStore
@@ -177,14 +172,12 @@ impl KvStore {
                 return Ok(None);
             }
         };
-        // println!("off2len: {}:{}", off2len.offset, off2len.len);
         match &mut self.log {
             Some(log) => {
                 let mut buf = String::new();
                 log.seek(SeekFrom::Start(off2len.offset as u64))?;
                 log.take(off2len.len as u64).read_to_string(&mut buf)?;
                 let decode: OptData = serde_json::from_str(&buf)?;
-                // println!("buf: {}, decode :{:?}", buf, decode);
                 match decode {
                     OptData::SetData { key: _, value } => return Ok(Some(value)),
                     _ => return Ok(None),
@@ -195,6 +188,49 @@ impl KvStore {
         Ok(None)
     }
 
+    // create a temporary log file to rebuild the new log
+    // then rename temporary log file to self.log_name
+    fn rebuild_log(&mut self, offset: usize, data: &String) -> Result<()> {
+        let mut sorted: Vec<_> = self.kvs.iter_mut().collect();
+        sorted.sort_by(|l, r| l.1.offset.cmp(&r.1.offset));
+
+        let mut new_path = PathBuf::from(&self.log_name);
+        new_path.set_file_name("kvs.log.swp");
+        let new_file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .open(&new_path)?;
+
+        let mut new_file_offset: i32 = 0;
+        let mut diff: i32 = 0;
+        match &mut self.log {
+            Some(log) => {
+                for (_, value) in sorted.iter_mut() {
+                    let mut buf = String::new();
+                    if offset == value.offset {
+                        if data.len() != value.len {
+                            diff = data.len() as i32 - value.len as i32;
+                        }
+                        buf = String::from(data);
+                    } else {
+                        log.seek(SeekFrom::Start(value.offset as u64))?;
+                        log.take(value.len as u64).read_to_string(&mut buf)?;
+                        new_file_offset = value.offset as i32 + diff;
+                    }
+                    new_file.write_at(&buf.as_bytes(), new_file_offset as u64)?;
+                    value.offset = new_file_offset as usize;
+                    value.len = buf.len();
+                    new_file_offset = value.offset as i32 + value.len as i32;
+                }
+
+                fs::rename(&new_path, &self.log_name)?;
+                Ok(())
+            }
+            None => Ok(()),
+        }
+    }
+
     /// Open the KvStore at a given path. Return the KvStore.
     pub fn open(path: impl Into<PathBuf>) -> Result<KvStore> {
         let mut pathbuf = path.into();
@@ -203,7 +239,6 @@ impl KvStore {
             .create(true)
             .read(true)
             .write(true)
-            .append(true)
             .open(&pathbuf)?;
         let mut kvs: HashMap<String, OffsetLen> = HashMap::new();
         let mut offset: usize = 0;
@@ -216,7 +251,7 @@ impl KvStore {
                         key,
                         OffsetLen {
                             offset,
-                            len: line.len(),
+                            len: line.len() + 1,
                         },
                     );
                 }
@@ -232,6 +267,7 @@ impl KvStore {
             kvs,
             log: Some(file),
             log_off: offset,
+            log_name: PathBuf::from(pathbuf),
         })
     }
 }
